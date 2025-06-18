@@ -55,7 +55,7 @@
             # Development tools
             gdb
             valgrind
-            clang-format
+            clang-tools
             cppcheck
             
             # X11 testing tools
