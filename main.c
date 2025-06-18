@@ -24,17 +24,14 @@
 #define MAX_BULLETS 500
 #define PLAYER_SIZE 20
 #define PLAYER_SPEED 300.0f
-#define PLAYER_ACCELERATION 1500.0f
-#define PLAYER_FRICTION 800.0f
+#define PLAYER_ACCELERATION 2000.0f
+#define PLAYER_FRICTION 1200.0f
 #define BULLET_SIZE 3
 #define BULLET_SPEED 600.0f
 #define BULLET_LIFETIME 3.0f
 #define GUN_LENGTH 25
-#define SHOOT_COOLDOWN 0.1f
-#define RECOIL_STRENGTH 8.0f
-#define RECOIL_RECOVERY 12.0f
-#define MAX_RECOIL_OFFSET 15.0f
 #define SCREEN_SHAKE_DECAY 15.0f
+#define MAX_AMMO_DISPLAY 999
 #define MAX_MESSAGE_SIZE 1024
 #define DEFAULT_PORT 12345
 
@@ -45,6 +42,36 @@ typedef enum {
     GAME_JOIN_SETUP,
     GAME_PLAYING
 } GameState;
+
+// Weapon types
+typedef enum {
+    WEAPON_PISTOL = 0,
+    WEAPON_SHOTGUN = 1,
+    WEAPON_RIFLE = 2,
+    WEAPON_SMG = 3,
+    WEAPON_SNIPER = 4,
+    WEAPON_COUNT = 5
+} WeaponType;
+
+// Weapon statistics
+typedef struct {
+    WeaponType type;
+    char name[16];
+    float damage;
+    float fireRate;          // Shots per second
+    float recoilStrength;
+    float recoilRecovery;
+    float maxRecoilOffset;
+    float bulletSpeed;
+    float bulletLifetime;
+    int pelletCount;         // For shotgun spread
+    float spreadAngle;       // For shotgun/SMG spread
+    int maxAmmo;
+    int clipSize;
+    float reloadTime;
+    float range;
+    Color bulletColor;
+} WeaponStats;
 
 // Player structure
 typedef struct {
@@ -61,6 +88,13 @@ typedef struct {
     bool active;
     bool isLocal;
     double lastUpdate;
+    
+    // Weapon system
+    WeaponType currentWeapon;
+    int ammo[WEAPON_COUNT];
+    int clipAmmo[WEAPON_COUNT];
+    float reloadTimer;
+    bool isReloading;
 } Player;
 
 // Bullet structure
@@ -70,6 +104,9 @@ typedef struct {
     float lifetime;
     char playerId[32];
     bool active;
+    float damage;
+    WeaponType weaponType;
+    Color color;
 } Bullet;
 
 // Network message types
@@ -143,10 +180,112 @@ typedef struct {
     Vector2 screenShake;
     float screenShakeIntensity;
     bool screenShakeEnabled;
+    
+    // Movement settings
+    bool smoothMovement;
 } Game;
 
 // Global game instance
 Game game = {0};
+
+// Weapon statistics array
+WeaponStats weaponStats[WEAPON_COUNT] = {
+    // PISTOL
+    {
+        .type = WEAPON_PISTOL,
+        .name = "Pistol",
+        .damage = 25.0f,
+        .fireRate = 3.0f,
+        .recoilStrength = 8.0f,
+        .recoilRecovery = 12.0f,
+        .maxRecoilOffset = 15.0f,
+        .bulletSpeed = 700.0f,
+        .bulletLifetime = 3.0f,
+        .pelletCount = 1,
+        .spreadAngle = 0.0f,
+        .maxAmmo = 120,
+        .clipSize = 12,
+        .reloadTime = 1.5f,
+        .range = 600.0f,
+        .bulletColor = YELLOW
+    },
+    // SHOTGUN
+    {
+        .type = WEAPON_SHOTGUN,
+        .name = "Shotgun",
+        .damage = 15.0f,
+        .fireRate = 1.2f,
+        .recoilStrength = 25.0f,
+        .recoilRecovery = 8.0f,
+        .maxRecoilOffset = 35.0f,
+        .bulletSpeed = 500.0f,
+        .bulletLifetime = 1.5f,
+        .pelletCount = 6,
+        .spreadAngle = 0.3f,
+        .maxAmmo = 36,
+        .clipSize = 6,
+        .reloadTime = 3.0f,
+        .range = 300.0f,
+        .bulletColor = ORANGE
+    },
+    // RIFLE
+    {
+        .type = WEAPON_RIFLE,
+        .name = "Rifle",
+        .damage = 40.0f,
+        .fireRate = 2.0f,
+        .recoilStrength = 18.0f,
+        .recoilRecovery = 10.0f,
+        .maxRecoilOffset = 25.0f,
+        .bulletSpeed = 900.0f,
+        .bulletLifetime = 4.0f,
+        .pelletCount = 1,
+        .spreadAngle = 0.0f,
+        .maxAmmo = 90,
+        .clipSize = 30,
+        .reloadTime = 2.5f,
+        .range = 800.0f,
+        .bulletColor = WHITE
+    },
+    // SMG
+    {
+        .type = WEAPON_SMG,
+        .name = "SMG",
+        .damage = 18.0f,
+        .fireRate = 8.0f,
+        .recoilStrength = 12.0f,
+        .recoilRecovery = 15.0f,
+        .maxRecoilOffset = 20.0f,
+        .bulletSpeed = 600.0f,
+        .bulletLifetime = 2.5f,
+        .pelletCount = 1,
+        .spreadAngle = 0.1f,
+        .maxAmmo = 180,
+        .clipSize = 30,
+        .reloadTime = 2.0f,
+        .range = 500.0f,
+        .bulletColor = LIME
+    },
+    // SNIPER
+    {
+        .type = WEAPON_SNIPER,
+        .name = "Sniper",
+        .damage = 80.0f,
+        .fireRate = 0.8f,
+        .recoilStrength = 35.0f,
+        .recoilRecovery = 6.0f,
+        .maxRecoilOffset = 50.0f,
+        .bulletSpeed = 1200.0f,
+        .bulletLifetime = 5.0f,
+        .pelletCount = 1,
+        .spreadAngle = 0.0f,
+        .maxAmmo = 20,
+        .clipSize = 5,
+        .reloadTime = 4.0f,
+        .range = 1000.0f,
+        .bulletColor = RED
+    }
+};
 
 // Function prototypes
 void InitGame(void);
@@ -164,6 +303,11 @@ void UpdatePlayers(float dt);
 void UpdateBullets(float dt);
 void DrawPlayers(void);
 void DrawBullets(void);
+WeaponStats* GetCurrentWeaponStats(Player* player);
+void SwitchWeapon(Player* player, WeaponType weapon);
+void ReloadWeapon(Player* player);
+bool CanShoot(Player* player);
+void FireWeapon(Player* player);
 void DrawMenu(void);
 void DrawHostSetup(void);
 void DrawJoinSetup(void);
@@ -214,6 +358,7 @@ void InitGame(void)
     game.screenShake = (Vector2){0, 0};
     game.screenShakeIntensity = 0;
     game.screenShakeEnabled = true;
+    game.smoothMovement = true;
     
     // Initialize input fields
     strcpy(game.hostPortStr, "12345");
@@ -460,6 +605,24 @@ void HandleInput(void)
                 SetStatusMessage("Screen Shake: OFF", 2.0f);
                 game.screenShakeIntensity = 0;
             }
+        } else if (IsKeyPressed(KEY_F6)) {
+            game.smoothMovement = !game.smoothMovement;
+            if (game.smoothMovement) {
+                SetStatusMessage("Movement: Smooth", 2.0f);
+            } else {
+                SetStatusMessage("Movement: Direct", 2.0f);
+            }
+        }
+        
+        // Weapon switching and reloading for local player
+        Player* localPlayer = FindPlayer(game.localPlayerId);
+        if (localPlayer && localPlayer->active) {
+            if (IsKeyPressed(KEY_ONE)) SwitchWeapon(localPlayer, WEAPON_PISTOL);
+            else if (IsKeyPressed(KEY_TWO)) SwitchWeapon(localPlayer, WEAPON_SHOTGUN);
+            else if (IsKeyPressed(KEY_THREE)) SwitchWeapon(localPlayer, WEAPON_RIFLE);
+            else if (IsKeyPressed(KEY_FOUR)) SwitchWeapon(localPlayer, WEAPON_SMG);
+            else if (IsKeyPressed(KEY_FIVE)) SwitchWeapon(localPlayer, WEAPON_SNIPER);
+            else if (IsKeyPressed(KEY_R)) ReloadWeapon(localPlayer);
         }
     }
 }
@@ -495,33 +658,53 @@ void UpdatePlayers(float dt)
         localPlayer->targetVelocity.x = inputDirection.x * PLAYER_SPEED;
         localPlayer->targetVelocity.y = inputDirection.y * PLAYER_SPEED;
         
-        // Apply acceleration/friction for smooth movement
-        if (inputLength > 0) {
-            // Accelerate towards target velocity
-            float accelX = (localPlayer->targetVelocity.x - localPlayer->velocity.x) * PLAYER_ACCELERATION * dt;
-            float accelY = (localPlayer->targetVelocity.y - localPlayer->velocity.y) * PLAYER_ACCELERATION * dt;
-            localPlayer->velocity.x += accelX;
-            localPlayer->velocity.y += accelY;
-        } else {
-            // Apply friction when no input
-            float frictionForce = PLAYER_FRICTION * dt;
-            float currentSpeed = sqrtf(localPlayer->velocity.x * localPlayer->velocity.x + localPlayer->velocity.y * localPlayer->velocity.y);
-            if (currentSpeed > 0) {
-                float frictionX = -(localPlayer->velocity.x / currentSpeed) * frictionForce;
-                float frictionY = -(localPlayer->velocity.y / currentSpeed) * frictionForce;
+        // Movement physics - choose between smooth or direct
+        if (game.smoothMovement) {
+            // Smooth movement with improved direction changes
+            if (inputLength > 0) {
+                // Use different acceleration based on whether we're changing direction or not
+                float currentSpeed = sqrtf(localPlayer->velocity.x * localPlayer->velocity.x + localPlayer->velocity.y * localPlayer->velocity.y);
                 
-                if (fabsf(frictionX) > fabsf(localPlayer->velocity.x)) {
-                    localPlayer->velocity.x = 0;
-                } else {
-                    localPlayer->velocity.x += frictionX;
+                // Check if we're changing direction significantly
+                float dotProduct = (localPlayer->velocity.x * inputDirection.x + localPlayer->velocity.y * inputDirection.y) / (currentSpeed + 0.001f);
+                
+                float effectiveAccel = PLAYER_ACCELERATION;
+                if (dotProduct < 0.3f && currentSpeed > PLAYER_SPEED * 0.2f) {
+                    // Changing direction - use much higher acceleration for responsiveness
+                    effectiveAccel = PLAYER_ACCELERATION * 4.0f;
                 }
                 
-                if (fabsf(frictionY) > fabsf(localPlayer->velocity.y)) {
-                    localPlayer->velocity.y = 0;
-                } else {
-                    localPlayer->velocity.y += frictionY;
+                // Smooth acceleration with clamping
+                float accelX = (localPlayer->targetVelocity.x - localPlayer->velocity.x) * effectiveAccel * dt;
+                float accelY = (localPlayer->targetVelocity.y - localPlayer->velocity.y) * effectiveAccel * dt;
+                
+                localPlayer->velocity.x += accelX;
+                localPlayer->velocity.y += accelY;
+                
+                // Clamp to maximum speed
+                float speed = sqrtf(localPlayer->velocity.x * localPlayer->velocity.x + localPlayer->velocity.y * localPlayer->velocity.y);
+                if (speed > PLAYER_SPEED) {
+                    localPlayer->velocity.x = (localPlayer->velocity.x / speed) * PLAYER_SPEED;
+                    localPlayer->velocity.y = (localPlayer->velocity.y / speed) * PLAYER_SPEED;
+                }
+            } else {
+                // Apply friction when no input
+                float frictionForce = PLAYER_FRICTION * dt;
+                float currentSpeed = sqrtf(localPlayer->velocity.x * localPlayer->velocity.x + localPlayer->velocity.y * localPlayer->velocity.y);
+                if (currentSpeed > 0) {
+                    float frictionScale = frictionForce / currentSpeed;
+                    if (frictionScale >= 1.0f) {
+                        localPlayer->velocity.x = 0;
+                        localPlayer->velocity.y = 0;
+                    } else {
+                        localPlayer->velocity.x *= (1.0f - frictionScale);
+                        localPlayer->velocity.y *= (1.0f - frictionScale);
+                    }
                 }
             }
+        } else {
+            // Direct movement - instant response like classic shooters
+            localPlayer->velocity = localPlayer->targetVelocity;
         }
         
         // Apply velocity to position
@@ -542,8 +725,9 @@ void UpdatePlayers(float dt)
         }
         
         // Update recoil recovery
+        WeaponStats* currentWeapon = GetCurrentWeaponStats(localPlayer);
         if (localPlayer->recoilAmount > 0) {
-            localPlayer->recoilAmount -= RECOIL_RECOVERY * dt;
+            localPlayer->recoilAmount -= currentWeapon->recoilRecovery * dt;
             if (localPlayer->recoilAmount < 0) localPlayer->recoilAmount = 0;
         }
         
@@ -553,36 +737,24 @@ void UpdatePlayers(float dt)
         localPlayer->recoilOffset.y = sinf(recoilAngle) * localPlayer->recoilAmount;
         
         // Handle shooting
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && localPlayer->shootCooldown <= 0) {
-            Vector2 gunEnd = {
-                localPlayer->position.x + cosf(localPlayer->gunAngle) * GUN_LENGTH,
-                localPlayer->position.y + sinf(localPlayer->gunAngle) * GUN_LENGTH
-            };
-            Vector2 bulletVel = {
-                cosf(localPlayer->gunAngle) * BULLET_SPEED,
-                sinf(localPlayer->gunAngle) * BULLET_SPEED
-            };
-            CreateBullet(gunEnd, bulletVel, localPlayer->id);
-            localPlayer->shootCooldown = SHOOT_COOLDOWN;
-            
-            // Apply recoil
-            localPlayer->recoilAmount += RECOIL_STRENGTH;
-            if (localPlayer->recoilAmount > MAX_RECOIL_OFFSET) {
-                localPlayer->recoilAmount = MAX_RECOIL_OFFSET;
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && CanShoot(localPlayer)) {
+            FireWeapon(localPlayer);
+        }
+        
+        // Update reload timer
+        if (localPlayer->isReloading && localPlayer->reloadTimer > 0) {
+            localPlayer->reloadTimer -= dt;
+            if (localPlayer->reloadTimer <= 0) {
+                // Reload complete
+                WeaponStats* stats = GetCurrentWeaponStats(localPlayer);
+                int ammoNeeded = stats->clipSize - localPlayer->clipAmmo[localPlayer->currentWeapon];
+                int ammoToReload = (localPlayer->ammo[localPlayer->currentWeapon] < ammoNeeded) ? 
+                                  localPlayer->ammo[localPlayer->currentWeapon] : ammoNeeded;
+                
+                localPlayer->clipAmmo[localPlayer->currentWeapon] += ammoToReload;
+                localPlayer->ammo[localPlayer->currentWeapon] -= ammoToReload;
+                localPlayer->isReloading = false;
             }
-            
-            // Add subtle screen shake for local player (only if enabled)
-            if (game.screenShakeEnabled) {
-                game.screenShakeIntensity += 0.8f;
-                if (game.screenShakeIntensity > 2.0f) {
-                    game.screenShakeIntensity = 2.0f;
-                }
-            }
-            
-            // Apply subtle recoil to velocity (kickback)
-            float recoilKickback = 25.0f;
-            localPlayer->velocity.x -= cosf(localPlayer->gunAngle) * recoilKickback;
-            localPlayer->velocity.y -= sinf(localPlayer->gunAngle) * recoilKickback;
         }
     }
     
@@ -591,13 +763,14 @@ void UpdatePlayers(float dt)
         if (game.players[i].active) {
             // Update non-local players with smooth interpolation
             if (!game.players[i].isLocal) {
-                // Simple velocity-based prediction
-                game.players[i].position.x += game.players[i].velocity.x * dt * 0.2f;
-                game.players[i].position.y += game.players[i].velocity.y * dt * 0.2f;
+                // Reduced prediction to prevent teleporting
+                game.players[i].position.x += game.players[i].velocity.x * dt * 0.05f;
+                game.players[i].position.y += game.players[i].velocity.y * dt * 0.05f;
                 
                 // Update recoil recovery for remote players
+                WeaponStats* remoteWeapon = GetCurrentWeaponStats(&game.players[i]);
                 if (game.players[i].recoilAmount > 0) {
-                    game.players[i].recoilAmount -= RECOIL_RECOVERY * dt;
+                    game.players[i].recoilAmount -= remoteWeapon->recoilRecovery * dt;
                     if (game.players[i].recoilAmount < 0) game.players[i].recoilAmount = 0;
                 }
                 
@@ -605,6 +778,14 @@ void UpdatePlayers(float dt)
                 float recoilAngle = game.players[i].gunAngle + M_PI;
                 game.players[i].recoilOffset.x = cosf(recoilAngle) * game.players[i].recoilAmount;
                 game.players[i].recoilOffset.y = sinf(recoilAngle) * game.players[i].recoilAmount;
+                
+                // Update reload timer for remote players
+                if (game.players[i].isReloading && game.players[i].reloadTimer > 0) {
+                    game.players[i].reloadTimer -= dt;
+                    if (game.players[i].reloadTimer <= 0) {
+                        game.players[i].isReloading = false;
+                    }
+                }
             }
             
             // Update cooldowns
@@ -643,7 +824,7 @@ void UpdateBullets(float dt)
                     float distance = sqrtf(dx * dx + dy * dy);
                     if (distance < (PLAYER_SIZE/2 + BULLET_SIZE)) {
                         // Hit!
-                        game.players[j].health -= 20;
+                        game.players[j].health -= game.bullets[i].damage;
                         game.bullets[i].active = false;
                         game.bulletCount--;
                         
@@ -654,6 +835,9 @@ void UpdateBullets(float dt)
                                 (float)(rand() % (SCREEN_HEIGHT - PLAYER_SIZE)) + PLAYER_SIZE/2
                             };
                             game.players[j].health = 100;
+                            // Reset velocity to prevent teleporting
+                            game.players[j].velocity = (Vector2){0, 0};
+                            game.players[j].targetVelocity = (Vector2){0, 0};
                         }
                         break;
                     }
@@ -769,53 +953,114 @@ void DrawBullets(void)
 {
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (game.bullets[i].active) {
-            DrawCircle(game.bullets[i].position.x, game.bullets[i].position.y, BULLET_SIZE, YELLOW);
+            DrawCircle(game.bullets[i].position.x, game.bullets[i].position.y, BULLET_SIZE, game.bullets[i].color);
         }
     }
 }
 
 void DrawUI(void)
 {
-    // FPS
-    DrawText(TextFormat("FPS: %d", GetFPS()), 10, 10, 16, WHITE);
+    Player* localPlayer = FindPlayer(game.localPlayerId);
     
-    // Player count
+    // Clean top-left HUD
+    DrawRectangle(5, 5, 200, 80, (Color){0, 0, 0, 120}); // Semi-transparent background
+    DrawText(TextFormat("FPS: %d", GetFPS()), 10, 10, 16, 
+             GetFPS() > 60 ? GREEN : (GetFPS() > 30 ? YELLOW : RED));
     DrawText(TextFormat("Players: %d", game.playerCount), 10, 30, 16, WHITE);
     
-    // Network status
+    // Network status with color coding
     if (game.isHost) {
-        DrawText(TextFormat("Hosting on port %d", game.hostPort), 10, 50, 16, WHITE);
+        DrawText("HOST", 10, 50, 16, GREEN);
+        DrawText(TextFormat(":%d", game.hostPort), 50, 50, 16, LIGHTGRAY);
     } else if (game.isConnected) {
-        DrawText(TextFormat("Connected to %s", game.hostIP), 10, 50, 16, WHITE);
-        DrawText(TextFormat("Ping: %.0fms", game.ping), 10, 70, 16, 
-                game.ping > 100 ? RED : (game.ping > 50 ? YELLOW : GREEN));
+        Color pingColor = game.ping > 100 ? RED : (game.ping > 50 ? YELLOW : GREEN);
+        DrawText(TextFormat("PING: %.0fms", game.ping), 10, 50, 16, pingColor);
     } else {
-        DrawText("Not connected", 10, 50, 16, LIGHTGRAY);
+        DrawText("OFFLINE", 10, 50, 16, RED);
     }
     
-    if (game.debugMode) {
-        DrawText("DEBUG MODE (F1 to toggle)", 10, 90, 16, YELLOW);
-        DrawText(TextFormat("Local Player: %s", game.localPlayerId), 10, 110, 16, WHITE);
-        DrawText(TextFormat("Bullets: %d", game.bulletCount), 10, 130, 16, WHITE);
-        DrawText(TextFormat("Packets Sent: %d", game.packetsSent), 10, 150, 16, WHITE);
-        DrawText(TextFormat("Packets Received: %d", game.packetsReceived), 10, 170, 16, WHITE);
+    // Weapon/Ammo HUD (bottom-right)
+    if (localPlayer && localPlayer->active) {
+        WeaponStats* stats = GetCurrentWeaponStats(localPlayer);
+        int hudX = SCREEN_WIDTH - 250;
+        int hudY = SCREEN_HEIGHT - 120;
         
-        if (game.showAdvancedStats) {
-            float frameTime = GetFrameTime() * 1000.0f; // Convert to ms
-            DrawText(TextFormat("Frame Time: %.2fms", frameTime), 10, 190, 16, WHITE);
-            DrawText(TextFormat("Target FPS: %s", game.targetFPS == 0 ? "Uncapped" : TextFormat("%d", game.targetFPS)), 10, 210, 16, WHITE);
-            DrawText(TextFormat("VSync: %s", game.vsyncEnabled ? "ON" : "OFF"), 10, 230, 16, WHITE);
-            DrawText(TextFormat("1% Low FPS: %.1f", GetFPS() * 0.99f), 10, 250, 16, WHITE);
+        // Weapon HUD background
+        DrawRectangle(hudX - 10, hudY - 10, 240, 110, (Color){0, 0, 0, 140});
+        DrawRectangleLines(hudX - 10, hudY - 10, 240, 110, WHITE);
+        
+        // Weapon name
+        DrawText(stats->name, hudX, hudY, 24, stats->bulletColor);
+        
+        // Ammo display
+        if (localPlayer->isReloading) {
+            float reloadProgress = 1.0f - (localPlayer->reloadTimer / stats->reloadTime);
+            DrawText("RELOADING", hudX, hudY + 30, 18, YELLOW);
+            DrawRectangle(hudX, hudY + 55, 200, 10, DARKGRAY);
+            DrawRectangle(hudX, hudY + 55, 200 * reloadProgress, 10, YELLOW);
+        } else {
+            // Clip ammo (large)
+            DrawText(TextFormat("%d", localPlayer->clipAmmo[localPlayer->currentWeapon]), 
+                     hudX, hudY + 30, 32, 
+                     localPlayer->clipAmmo[localPlayer->currentWeapon] > 0 ? WHITE : RED);
             
-            Player* localPlayer = FindPlayer(game.localPlayerId);
-            if (localPlayer) {
-                DrawText(TextFormat("Velocity: %.1f", sqrtf(localPlayer->velocity.x * localPlayer->velocity.x + localPlayer->velocity.y * localPlayer->velocity.y)), 10, 270, 16, WHITE);
-                DrawText(TextFormat("Recoil: %.1f", localPlayer->recoilAmount), 10, 290, 16, WHITE);
-                DrawText(TextFormat("Screen Shake: %s (%.1f)", game.screenShakeEnabled ? "ON" : "OFF", game.screenShakeIntensity), 10, 310, 16, WHITE);
-            }
+            // Reserve ammo (small)
+            DrawText(TextFormat("/ %d", localPlayer->ammo[localPlayer->currentWeapon]), 
+                     hudX + 50, hudY + 40, 16, LIGHTGRAY);
         }
-    } else {
-        DrawText("F1=Debug F2=Stats F3=FPS F4=VSync F5=Shake", 10, 90, 14, LIGHTGRAY);
+        
+        // Health bar
+        int healthBarY = hudY + 70;
+        DrawText("HEALTH", hudX, healthBarY, 14, WHITE);
+        DrawRectangle(hudX, healthBarY + 20, 200, 12, DARKGRAY);
+        Color healthColor = localPlayer->health > 50 ? GREEN : 
+                           (localPlayer->health > 25 ? YELLOW : RED);
+        DrawRectangle(hudX, healthBarY + 20, 200 * (localPlayer->health / 100.0f), 12, healthColor);
+        DrawText(TextFormat("%.0f", localPlayer->health), hudX + 210, healthBarY + 20, 12, WHITE);
+    }
+    
+    // Weapon selection indicator (center-bottom)
+    if (localPlayer && localPlayer->active) {
+        int weaponHudY = SCREEN_HEIGHT - 60;
+        int startX = SCREEN_WIDTH / 2 - 150;
+        
+        for (int i = 0; i < WEAPON_COUNT; i++) {
+            int x = startX + i * 60;
+            Rectangle weaponSlot = {x, weaponHudY, 50, 40};
+            
+            Color slotColor = (i == localPlayer->currentWeapon) ? 
+                             weaponStats[i].bulletColor : DARKGRAY;
+            
+            DrawRectangleRec(weaponSlot, (Color){slotColor.r/3, slotColor.g/3, slotColor.b/3, 180});
+            DrawRectangleLinesEx(weaponSlot, 2, slotColor);
+            
+            // Weapon number
+            DrawText(TextFormat("%d", i + 1), x + 20, weaponHudY + 5, 16, slotColor);
+            
+            // Weapon initial
+            DrawText(TextFormat("%c", weaponStats[i].name[0]), x + 20, weaponHudY + 20, 14, slotColor);
+        }
+    }
+    
+    // Debug overlay (cleaner)
+    if (game.debugMode) {
+        DrawRectangle(5, 90, 300, 200, (Color){0, 0, 0, 180});
+        DrawText("DEBUG MODE", 10, 95, 16, YELLOW);
+        DrawText(TextFormat("Bullets: %d", game.bulletCount), 10, 115, 14, WHITE);
+        DrawText(TextFormat("Packets: %d/%d", game.packetsSent, game.packetsReceived), 10, 135, 14, WHITE);
+        
+        if (game.showAdvancedStats && localPlayer) {
+            float frameTime = GetFrameTime() * 1000.0f;
+            DrawText(TextFormat("Frame: %.1fms", frameTime), 10, 155, 14, WHITE);
+            DrawText(TextFormat("Velocity: %.0f", sqrtf(localPlayer->velocity.x * localPlayer->velocity.x + localPlayer->velocity.y * localPlayer->velocity.y)), 10, 175, 14, WHITE);
+            DrawText(TextFormat("Recoil: %.1f", localPlayer->recoilAmount), 10, 195, 14, WHITE);
+            DrawText(TextFormat("Movement: %s", game.smoothMovement ? "Smooth" : "Direct"), 10, 215, 14, WHITE);
+        }
+    }
+    
+    // Controls hint (bottom-left, smaller)
+    if (!game.debugMode) {
+        DrawText("F1=Debug | 1-5=Weapons | R=Reload | F6=Movement", 10, SCREEN_HEIGHT - 20, 12, GRAY);
     }
 }
 
@@ -848,6 +1093,15 @@ Player* CreatePlayer(const char* id, Vector2 pos)
             p->health = 100;
             p->shootCooldown = 0;
             p->recoilAmount = 0;
+            p->currentWeapon = WEAPON_PISTOL;
+            p->isReloading = false;
+            p->reloadTimer = 0;
+            
+            // Initialize ammo
+            for (int w = 0; w < WEAPON_COUNT; w++) {
+                p->ammo[w] = weaponStats[w].maxAmmo;
+                p->clipAmmo[w] = weaponStats[w].clipSize;
+            }
             p->color = (Color){
                 128 + rand() % 128,
                 128 + rand() % 128,
@@ -866,11 +1120,17 @@ Player* CreatePlayer(const char* id, Vector2 pos)
 
 void CreateBullet(Vector2 pos, Vector2 vel, const char* playerId)
 {
+    Player* player = FindPlayer(playerId);
+    WeaponStats* stats = player ? GetCurrentWeaponStats(player) : &weaponStats[WEAPON_PISTOL];
+    
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (!game.bullets[i].active) {
             game.bullets[i].position = pos;
             game.bullets[i].velocity = vel;
-            game.bullets[i].lifetime = BULLET_LIFETIME;
+            game.bullets[i].lifetime = stats->bulletLifetime;
+            game.bullets[i].damage = stats->damage;
+            game.bullets[i].weaponType = stats->type;
+            game.bullets[i].color = stats->bulletColor;
             strcpy(game.bullets[i].playerId, playerId);
             game.bullets[i].active = true;
             game.bulletCount++;
@@ -896,6 +1156,103 @@ void CreateBullet(Vector2 pos, Vector2 vel, const char* playerId)
             break;
         }
     }
+}
+
+WeaponStats* GetCurrentWeaponStats(Player* player)
+{
+    if (!player || player->currentWeapon >= WEAPON_COUNT) {
+        return &weaponStats[WEAPON_PISTOL];
+    }
+    return &weaponStats[player->currentWeapon];
+}
+
+void SwitchWeapon(Player* player, WeaponType weapon)
+{
+    if (!player || player->isReloading || weapon >= WEAPON_COUNT) return;
+    
+    player->currentWeapon = weapon;
+    char msg[64];
+    sprintf(msg, "Switched to %s", weaponStats[weapon].name);
+    SetStatusMessage(msg, 1.5f);
+}
+
+void ReloadWeapon(Player* player)
+{
+    if (!player || player->isReloading) return;
+    
+    WeaponStats* stats = GetCurrentWeaponStats(player);
+    
+    // Check if reload is needed and possible
+    if (player->clipAmmo[player->currentWeapon] >= stats->clipSize || 
+        player->ammo[player->currentWeapon] <= 0) {
+        return;
+    }
+    
+    player->isReloading = true;
+    player->reloadTimer = stats->reloadTime;
+}
+
+bool CanShoot(Player* player)
+{
+    if (!player || player->isReloading || player->shootCooldown > 0) return false;
+    
+    return player->clipAmmo[player->currentWeapon] > 0;
+}
+
+void FireWeapon(Player* player)
+{
+    if (!CanShoot(player)) return;
+    
+    WeaponStats* stats = GetCurrentWeaponStats(player);
+    
+    // Consume ammo
+    player->clipAmmo[player->currentWeapon]--;
+    
+    // Set cooldown based on fire rate
+    player->shootCooldown = 1.0f / stats->fireRate;
+    
+    // Fire bullets (multiple for shotgun)
+    for (int pellet = 0; pellet < stats->pelletCount; pellet++) {
+        float spreadOffset = 0;
+        if (stats->pelletCount > 1) {
+            // Shotgun spread
+            spreadOffset = ((float)pellet / (stats->pelletCount - 1) - 0.5f) * stats->spreadAngle;
+        } else if (stats->spreadAngle > 0) {
+            // Random spread for SMG
+            spreadOffset = ((float)rand() / RAND_MAX - 0.5f) * stats->spreadAngle;
+        }
+        
+        float angle = player->gunAngle + spreadOffset;
+        Vector2 gunEnd = {
+            player->position.x + cosf(angle) * GUN_LENGTH,
+            player->position.y + sinf(angle) * GUN_LENGTH
+        };
+        Vector2 bulletVel = {
+            cosf(angle) * stats->bulletSpeed,
+            sinf(angle) * stats->bulletSpeed
+        };
+        
+        CreateBullet(gunEnd, bulletVel, player->id);
+    }
+    
+    // Apply recoil (clamped to prevent excessive buildup)
+    player->recoilAmount += stats->recoilStrength * 0.7f; // Reduced multiplier
+    if (player->recoilAmount > stats->maxRecoilOffset) {
+        player->recoilAmount = stats->maxRecoilOffset;
+    }
+    
+    // Add screen shake for local player (only if enabled)
+    if (player->isLocal && game.screenShakeEnabled) {
+        game.screenShakeIntensity += stats->recoilStrength * 0.05f;
+        if (game.screenShakeIntensity > 3.0f) {
+            game.screenShakeIntensity = 3.0f;
+        }
+    }
+    
+    // Apply recoil to velocity (kickback)
+    float recoilKickback = stats->recoilStrength * 1.5f;
+    player->velocity.x -= cosf(player->gunAngle) * recoilKickback;
+    player->velocity.y -= sinf(player->gunAngle) * recoilKickback;
 }
 
 int StartHost(int port)
@@ -1004,7 +1361,7 @@ void UpdateNetwork(void)
     // Send periodic updates for local player
     static double lastUpdate = 0;
     double now = GetTime();
-    if (now - lastUpdate > 0.05) { // 20 FPS update rate
+    if (now - lastUpdate > 0.033) { // 30 FPS update rate
         Player* localPlayer = FindPlayer(game.localPlayerId);
         if (localPlayer && (game.isConnected || game.isHost)) {
             NetworkMessage msg = {0};
@@ -1088,10 +1445,21 @@ void ProcessMessage(NetworkMessage* msg, struct sockaddr_in* from)
         case MSG_PLAYER_UPDATE: {
             Player* player = FindPlayer(msg->playerId);
             if (player && !player->isLocal) {
-                // Smooth interpolation
-                float lerpFactor = 0.3f;
-                player->position.x += (msg->position.x - player->position.x) * lerpFactor;
-                player->position.y += (msg->position.y - player->position.y) * lerpFactor;
+                // Check if position difference is too large (potential teleport)
+                float dx = msg->position.x - player->position.x;
+                float dy = msg->position.y - player->position.y;
+                float distance = sqrtf(dx * dx + dy * dy);
+                
+                if (distance > 100.0f) {
+                    // Large difference, snap to server position
+                    player->position = msg->position;
+                } else {
+                    // Small difference, smooth interpolation
+                    float lerpFactor = 0.15f; // Reduced for smoother movement
+                    player->position.x += dx * lerpFactor;
+                    player->position.y += dy * lerpFactor;
+                }
+                
                 player->velocity = msg->velocity;
                 player->gunAngle = msg->gunAngle;
                 player->health = msg->health;
