@@ -1,7 +1,7 @@
 # Makefile for Layla 2D Multiplayer Shooter (C/raylib)
 
 CC = gcc
-CFLAGS = -std=c99 -Wall -Wextra -O3
+CFLAGS = -std=c99 -Wall -Wextra -O3 -I./include
 LDFLAGS = -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
 
 # Detect OS for platform-specific flags
@@ -14,7 +14,11 @@ ifeq ($(UNAME_S),Darwin)
 endif
 
 TARGET = layla
-SOURCES = main.c
+SRC_DIR = src
+INCLUDE_DIR = include
+
+# Find all source files
+SOURCES = $(wildcard $(SRC_DIR)/*.c)
 OBJECTS = $(SOURCES:.c=.o)
 
 # Default target
@@ -85,7 +89,7 @@ analyze:
 
 # Format code
 format:
-	clang-format -i $(SOURCES) *.h
+	clang-format -i $(SOURCES) $(INCLUDE_DIR)/*.h
 
 # Show help
 help:
