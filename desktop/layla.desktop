@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=Layla
-Comment=A simple X11 window manager
-Exec=layla
-Icon=applications-development
-Type=XSession
-DesktopNames=Layla
-Keywords=window;manager;wm;x11;tiling;floating
