@@ -1,0 +1,44 @@
+# Makefile for cross-compiling to Windows
+# Usage: make -f Makefile.windows
+
+# Compiler settings for Windows cross-compilation
+CC = x86_64-w64-mingw32-gcc
+CFLAGS = -std=c99 -Wall -Wextra -O3 -I./include -I./raylib/include
+LDFLAGS = -L./raylib/lib -lraylib -lopengl32 -lgdi32 -lwinmm -lws2_32 -static-libgcc -static-libstdc++
+
+# Output executable
+TARGET = layla.exe
+
+# Source files
+SRCDIR = src
+SOURCES = $(wildcard $(SRCDIR)/*.c)
+OBJECTS = $(SOURCES:.c=.o)
+
+# Default target
+all: $(TARGET)
+
+# Link the executable
+$(TARGET): $(OBJECTS)
+	@echo "Linking $(TARGET)..."
+	$(CC) $(OBJECTS) -o $(TARGET) $(LDFLAGS)
+	@echo "Windows build complete! Executable: $(TARGET)"
+
+# Compile source files
+%.o: %.c
+	@echo "Compiling $<..."
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Clean build files
+clean:
+	@echo "Cleaning Windows build files..."
+	rm -f $(OBJECTS) $(TARGET)
+
+# Download raylib for Windows (if needed)
+setup-raylib-windows:
+	@echo "Setting up raylib for Windows cross-compilation..."
+	@mkdir -p raylib/lib raylib/include
+	@echo "You'll need to download raylib Windows libraries manually"
+	@echo "Get them from: https://github.com/raysan5/raylib/releases"
+	@echo "Extract to raylib/ directory"
+
+.PHONY: all clean setup-raylib-windows
