@@ -20,7 +20,6 @@
           
           buildInputs = with pkgs; [
             xorg.libX11
-            xorg.libXutil
           ];
           
           nativeBuildInputs = with pkgs; [
@@ -52,7 +51,6 @@
             gcc
             pkg-config
             xorg.libX11
-            xorg.libXutil
             
             # Development tools
             gdb
