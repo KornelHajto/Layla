@@ -38,9 +38,9 @@
           
           meta = with pkgs.lib; {
             description = "A simple X11 window manager";
-            homepage = "https://github.com/yourusername/layla";
+            homepage = "https://github.com/YOUR_USERNAME/layla";
             license = licenses.mit;
-            maintainers = [ maintainers.yourusername ];
+            maintainers = [ ];
             platforms = platforms.linux;
           };
         };

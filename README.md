@@ -34,7 +34,7 @@ A lightweight, minimalist X11 window manager written in C, designed for simplici
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/layla.git
+git clone https://github.com/YOUR_USERNAME/layla.git
 cd layla
 ```
 
@@ -63,7 +63,7 @@ sudo cp result/bin/layla /usr/local/bin/
 
 2. Clone and build:
 ```bash
-git clone https://github.com/yourusername/layla.git
+git clone https://github.com/YOUR_USERNAME/layla.git
 cd layla
 make
 ```
@@ -79,7 +79,7 @@ Add to your NixOS configuration:
 
 ```nix
 {
-  inputs.layla.url = "github:yourusername/layla";
+  inputs.layla.url = "github:YOUR_USERNAME/layla";
   
   outputs = { self, nixpkgs, layla }: {
     nixosConfigurations.yourhostname = nixpkgs.lib.nixosSystem {
@@ -292,4 +292,4 @@ MIT License - see LICENSE file for details.
 
 ---
 
-For more information, visit the [project homepage](https://github.com/yourusername/layla) or check the [wiki](https://github.com/yourusername/layla/wiki).
+For more information, visit the [project homepage](https://github.com/YOUR_USERNAME/layla) or check the [wiki](https://github.com/YOUR_USERNAME/layla/wiki).
