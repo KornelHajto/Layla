@@ -32,6 +32,12 @@
 #define GUN_LENGTH 25
 #define SCREEN_SHAKE_DECAY 15.0f
 #define MAX_AMMO_DISPLAY 999
+#define MAX_PARTICLES 200
+#define MAX_MUZZLE_FLASHES 50
+#define MAX_HIT_EFFECTS 100
+#define PARTICLE_LIFETIME 2.0f
+#define MUZZLE_FLASH_LIFETIME 0.1f
+#define HIT_EFFECT_LIFETIME 0.3f
 #define MAX_MESSAGE_SIZE 1024
 #define DEFAULT_PORT 12345
 
@@ -53,6 +59,54 @@ typedef enum {
     WEAPON_COUNT = 5
 } WeaponType;
 
+// Particle types
+typedef enum {
+    PARTICLE_BLOOD,
+    PARTICLE_SPARK,
+    PARTICLE_SMOKE,
+    PARTICLE_SHELL_CASING,
+    PARTICLE_EXPLOSION
+} ParticleType;
+
+// Particle structure
+typedef struct {
+    Vector2 position;
+    Vector2 velocity;
+    Vector2 acceleration;
+    float lifetime;
+    float maxLifetime;
+    Color color;
+    float size;
+    float rotation;
+    float rotationSpeed;
+    ParticleType type;
+    bool active;
+} Particle;
+
+// Muzzle flash structure
+typedef struct {
+    Vector2 position;
+    float angle;
+    float lifetime;
+    WeaponType weaponType;
+    float intensity;
+    float size;
+    float flameLength;
+    float spreadAngle;
+    bool active;
+} MuzzleFlash;
+
+// Hit effect structure
+typedef struct {
+    Vector2 position;
+    float lifetime;
+    float maxLifetime;
+    Color color;
+    float size;
+    ParticleType type;
+    bool active;
+} HitEffect;
+
 // Weapon statistics
 typedef struct {
     WeaponType type;
@@ -71,6 +125,8 @@ typedef struct {
     float reloadTime;
     float range;
     Color bulletColor;
+    Color muzzleFlashColor;
+    float muzzleFlashSize;
 } WeaponStats;
 
 // Player structure
@@ -183,6 +239,17 @@ typedef struct {
     
     // Movement settings
     bool smoothMovement;
+    
+    // Visual effects
+    Particle particles[MAX_PARTICLES];
+    MuzzleFlash muzzleFlashes[MAX_MUZZLE_FLASHES];
+    HitEffect hitEffects[MAX_HIT_EFFECTS];
+    int particleCount;
+    int muzzleFlashCount;
+    int hitEffectCount;
+    bool visualEffectsEnabled;
+    float damageFlashTimer;
+    Color damageFlashColor;
 } Game;
 
 // Global game instance
@@ -207,7 +274,9 @@ WeaponStats weaponStats[WEAPON_COUNT] = {
         .clipSize = 12,
         .reloadTime = 1.5f,
         .range = 600.0f,
-        .bulletColor = YELLOW
+        .bulletColor = YELLOW,
+        .muzzleFlashColor = ORANGE,
+        .muzzleFlashSize = 15.0f
     },
     // SHOTGUN
     {
@@ -226,7 +295,9 @@ WeaponStats weaponStats[WEAPON_COUNT] = {
         .clipSize = 6,
         .reloadTime = 3.0f,
         .range = 300.0f,
-        .bulletColor = ORANGE
+        .bulletColor = ORANGE,
+        .muzzleFlashColor = RED,
+        .muzzleFlashSize = 25.0f
     },
     // RIFLE
     {
@@ -245,7 +316,9 @@ WeaponStats weaponStats[WEAPON_COUNT] = {
         .clipSize = 30,
         .reloadTime = 2.5f,
         .range = 800.0f,
-        .bulletColor = WHITE
+        .bulletColor = WHITE,
+        .muzzleFlashColor = YELLOW,
+        .muzzleFlashSize = 20.0f
     },
     // SMG
     {
@@ -264,7 +337,9 @@ WeaponStats weaponStats[WEAPON_COUNT] = {
         .clipSize = 30,
         .reloadTime = 2.0f,
         .range = 500.0f,
-        .bulletColor = LIME
+        .bulletColor = LIME,
+        .muzzleFlashColor = GREEN,
+        .muzzleFlashSize = 12.0f
     },
     // SNIPER
     {
@@ -283,7 +358,9 @@ WeaponStats weaponStats[WEAPON_COUNT] = {
         .clipSize = 5,
         .reloadTime = 4.0f,
         .range = 1000.0f,
-        .bulletColor = RED
+        .bulletColor = RED,
+        .muzzleFlashColor = WHITE,
+        .muzzleFlashSize = 30.0f
     }
 };
 
@@ -303,6 +380,18 @@ void UpdatePlayers(float dt);
 void UpdateBullets(float dt);
 void DrawPlayers(void);
 void DrawBullets(void);
+void UpdateParticles(float dt);
+void UpdateMuzzleFlashes(float dt);
+void UpdateHitEffects(float dt);
+void DrawParticles(void);
+void DrawMuzzleFlashes(void);
+void DrawHitEffects(void);
+void CreateParticle(Vector2 pos, Vector2 vel, ParticleType type, Color color, float size);
+void CreateMuzzleFlash(Vector2 pos, float angle, WeaponType weaponType);
+void CreateHitEffect(Vector2 pos, ParticleType type, Color color);
+void CreateBloodSplatter(Vector2 pos, Vector2 bulletVel);
+void CreateSparkEffect(Vector2 pos, Vector2 bulletVel);
+void AddDamageFlash(Color color, float intensity);
 WeaponStats* GetCurrentWeaponStats(Player* player);
 void SwitchWeapon(Player* player, WeaponType weapon);
 void ReloadWeapon(Player* player);
@@ -359,6 +448,23 @@ void InitGame(void)
     game.screenShakeIntensity = 0;
     game.screenShakeEnabled = true;
     game.smoothMovement = true;
+    game.visualEffectsEnabled = true;
+    game.particleCount = 0;
+    game.muzzleFlashCount = 0;
+    game.hitEffectCount = 0;
+    game.damageFlashTimer = 0;
+    game.damageFlashColor = (Color){255, 0, 0, 0};
+    
+    // Initialize all particles as inactive
+    for (int i = 0; i < MAX_PARTICLES; i++) {
+        game.particles[i].active = false;
+    }
+    for (int i = 0; i < MAX_MUZZLE_FLASHES; i++) {
+        game.muzzleFlashes[i].active = false;
+    }
+    for (int i = 0; i < MAX_HIT_EFFECTS; i++) {
+        game.hitEffects[i].active = false;
+    }
     
     // Initialize input fields
     strcpy(game.hostPortStr, "12345");
@@ -387,12 +493,22 @@ void UpdateGame(void)
     if (game.state == GAME_PLAYING) {
         UpdatePlayers(dt);
         UpdateBullets(dt);
+        UpdateParticles(dt);
+        UpdateMuzzleFlashes(dt);
+        UpdateHitEffects(dt);
         UpdateNetwork();
     }
     
     // Update status message timer
     if (game.statusTimer > 0) {
         game.statusTimer -= dt;
+    }
+    
+    // Update damage flash
+    if (game.damageFlashTimer > 0) {
+        game.damageFlashTimer -= dt;
+        float alpha = (game.damageFlashTimer / 0.3f) * 60.0f;
+        game.damageFlashColor.a = (unsigned char)(alpha > 255 ? 255 : alpha);
     }
     
     // Update screen shake (much more subtle)
@@ -428,7 +544,17 @@ void DrawGame(void)
         case GAME_PLAYING:
             DrawPlayers();
             DrawBullets();
+            if (game.visualEffectsEnabled) {
+                DrawParticles();
+                DrawMuzzleFlashes();
+                DrawHitEffects();
+            }
             DrawUI();
+            
+            // Draw damage flash overlay
+            if (game.damageFlashTimer > 0) {
+                DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, game.damageFlashColor);
+            }
             break;
     }
     
@@ -611,6 +737,13 @@ void HandleInput(void)
                 SetStatusMessage("Movement: Smooth", 2.0f);
             } else {
                 SetStatusMessage("Movement: Direct", 2.0f);
+            }
+        } else if (IsKeyPressed(KEY_F7)) {
+            game.visualEffectsEnabled = !game.visualEffectsEnabled;
+            if (game.visualEffectsEnabled) {
+                SetStatusMessage("Visual Effects: ON", 2.0f);
+            } else {
+                SetStatusMessage("Visual Effects: OFF", 2.0f);
             }
         }
         
@@ -811,6 +944,15 @@ void UpdateBullets(float dt)
             if (game.bullets[i].lifetime <= 0 ||
                 game.bullets[i].position.x < -50 || game.bullets[i].position.x > SCREEN_WIDTH + 50 ||
                 game.bullets[i].position.y < -50 || game.bullets[i].position.y > SCREEN_HEIGHT + 50) {
+                
+                // Create spark effect when bullet hits wall (goes out of bounds)
+                if (game.visualEffectsEnabled && (game.bullets[i].position.x < 0 || 
+                    game.bullets[i].position.x > SCREEN_WIDTH || 
+                    game.bullets[i].position.y < 0 || 
+                    game.bullets[i].position.y > SCREEN_HEIGHT)) {
+                    CreateSparkEffect(game.bullets[i].position, game.bullets[i].velocity);
+                }
+                
                 game.bullets[i].active = false;
                 game.bulletCount--;
                 continue;
@@ -828,7 +970,29 @@ void UpdateBullets(float dt)
                         game.bullets[i].active = false;
                         game.bulletCount--;
                         
+                        // Create blood splatter effect
+                        if (game.visualEffectsEnabled) {
+                            CreateBloodSplatter(game.bullets[i].position, game.bullets[i].velocity);
+                            
+                            // Add damage flash for local player
+                            if (game.players[j].isLocal) {
+                                AddDamageFlash((Color){255, 0, 0, 60}, 0.3f);
+                            }
+                        }
+                        
                         if (game.players[j].health <= 0) {
+                            // Create death effect
+                            if (game.visualEffectsEnabled) {
+                                for (int effect = 0; effect < 8; effect++) {
+                                    Vector2 deathVel = {
+                                        (rand() % 200 - 100),
+                                        (rand() % 200 - 100)
+                                    };
+                                    CreateParticle(game.players[j].position, deathVel, PARTICLE_BLOOD, 
+                                                 (Color){150, 0, 0, 255}, 3.0f + rand() % 3);
+                                }
+                            }
+                            
                             // Respawn player
                             game.players[j].position = (Vector2){
                                 (float)(rand() % (SCREEN_WIDTH - PLAYER_SIZE)) + PLAYER_SIZE/2,
@@ -953,7 +1117,24 @@ void DrawBullets(void)
 {
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (game.bullets[i].active) {
+            // Draw bullet with slight glow effect
+            Color glowColor = game.bullets[i].color;
+            glowColor.a = 100;
+            if (game.visualEffectsEnabled) {
+                DrawCircle(game.bullets[i].position.x, game.bullets[i].position.y, BULLET_SIZE + 2, glowColor);
+            }
             DrawCircle(game.bullets[i].position.x, game.bullets[i].position.y, BULLET_SIZE, game.bullets[i].color);
+            
+            // Draw bullet trail for fast bullets
+            if (game.visualEffectsEnabled && game.bullets[i].weaponType == WEAPON_SNIPER) {
+                Vector2 trailStart = {
+                    game.bullets[i].position.x - game.bullets[i].velocity.x * 0.02f,
+                    game.bullets[i].position.y - game.bullets[i].velocity.y * 0.02f
+                };
+                Color trailColor = game.bullets[i].color;
+                trailColor.a = 150;
+                DrawLineEx(trailStart, game.bullets[i].position, 2, trailColor);
+            }
         }
     }
 }
@@ -1055,12 +1236,14 @@ void DrawUI(void)
             DrawText(TextFormat("Velocity: %.0f", sqrtf(localPlayer->velocity.x * localPlayer->velocity.x + localPlayer->velocity.y * localPlayer->velocity.y)), 10, 175, 14, WHITE);
             DrawText(TextFormat("Recoil: %.1f", localPlayer->recoilAmount), 10, 195, 14, WHITE);
             DrawText(TextFormat("Movement: %s", game.smoothMovement ? "Smooth" : "Direct"), 10, 215, 14, WHITE);
+            DrawText(TextFormat("Particles: %d", game.particleCount), 10, 235, 14, WHITE);
+            DrawText(TextFormat("Effects: %s", game.visualEffectsEnabled ? "ON" : "OFF"), 10, 255, 14, WHITE);
         }
     }
     
     // Controls hint (bottom-left, smaller)
     if (!game.debugMode) {
-        DrawText("F1=Debug | 1-5=Weapons | R=Reload | F6=Movement", 10, SCREEN_HEIGHT - 20, 12, GRAY);
+        DrawText("F1=Debug | 1-5=Weapons | R=Reload | F6=Movement | F7=Effects", 10, SCREEN_HEIGHT - 20, 12, GRAY);
     }
 }
 
@@ -1233,6 +1416,21 @@ void FireWeapon(Player* player)
         };
         
         CreateBullet(gunEnd, bulletVel, player->id);
+        
+        // Create muzzle flash
+        if (game.visualEffectsEnabled) {
+            CreateMuzzleFlash(gunEnd, angle, player->currentWeapon);
+        }
+        
+        // Create shell casing particle
+        if (game.visualEffectsEnabled && (rand() % 2) == 0) {
+            Vector2 casingVel = {
+                -sinf(angle) * 50 + (rand() % 40 - 20),
+                cosf(angle) * 50 + (rand() % 40 - 20)
+            };
+            CreateParticle(gunEnd, casingVel, PARTICLE_SHELL_CASING, 
+                         (Color){200, 150, 50, 255}, 2.0f);
+        }
     }
     
     // Apply recoil (clamped to prevent excessive buildup)
@@ -1253,6 +1451,282 @@ void FireWeapon(Player* player)
     float recoilKickback = stats->recoilStrength * 1.5f;
     player->velocity.x -= cosf(player->gunAngle) * recoilKickback;
     player->velocity.y -= sinf(player->gunAngle) * recoilKickback;
+}
+
+void UpdateParticles(float dt)
+{
+    for (int i = 0; i < MAX_PARTICLES; i++) {
+        if (game.particles[i].active) {
+            Particle* p = &game.particles[i];
+            
+            // Update position
+            p->velocity.x += p->acceleration.x * dt;
+            p->velocity.y += p->acceleration.y * dt;
+            p->position.x += p->velocity.x * dt;
+            p->position.y += p->velocity.y * dt;
+            
+            // Update rotation
+            p->rotation += p->rotationSpeed * dt;
+            
+            // Update lifetime
+            p->lifetime -= dt;
+            
+            // Fade out based on lifetime
+            float lifetimeRatio = p->lifetime / p->maxLifetime;
+            p->color.a = (unsigned char)(255 * lifetimeRatio);
+            
+            // Apply gravity to certain particles
+            if (p->type == PARTICLE_BLOOD || p->type == PARTICLE_SHELL_CASING) {
+                p->acceleration.y = 200.0f; // Gravity
+            }
+            
+            // Apply friction to shell casings
+            if (p->type == PARTICLE_SHELL_CASING) {
+                p->velocity.x *= 0.98f;
+                p->velocity.y *= 0.98f;
+            }
+            
+            if (p->lifetime <= 0) {
+                p->active = false;
+                game.particleCount--;
+            }
+        }
+    }
+}
+
+void UpdateMuzzleFlashes(float dt)
+{
+    for (int i = 0; i < MAX_MUZZLE_FLASHES; i++) {
+        if (game.muzzleFlashes[i].active) {
+            game.muzzleFlashes[i].lifetime -= dt;
+            if (game.muzzleFlashes[i].lifetime <= 0) {
+                game.muzzleFlashes[i].active = false;
+                game.muzzleFlashCount--;
+            }
+        }
+    }
+}
+
+void UpdateHitEffects(float dt)
+{
+    for (int i = 0; i < MAX_HIT_EFFECTS; i++) {
+        if (game.hitEffects[i].active) {
+            game.hitEffects[i].lifetime -= dt;
+            
+            // Fade out
+            float lifetimeRatio = game.hitEffects[i].lifetime / game.hitEffects[i].maxLifetime;
+            game.hitEffects[i].color.a = (unsigned char)(255 * lifetimeRatio);
+            
+            if (game.hitEffects[i].lifetime <= 0) {
+                game.hitEffects[i].active = false;
+                game.hitEffectCount--;
+            }
+        }
+    }
+}
+
+void DrawParticles(void)
+{
+    for (int i = 0; i < MAX_PARTICLES; i++) {
+        if (game.particles[i].active) {
+            Particle* p = &game.particles[i];
+            
+            if (p->type == PARTICLE_SHELL_CASING) {
+                // Draw shell casing as small rectangle
+                DrawCircle(p->position.x, p->position.y, p->size, p->color);
+            } else {
+                // Draw other particles as circles
+                DrawCircle(p->position.x, p->position.y, p->size, p->color);
+            }
+        }
+    }
+}
+
+void DrawMuzzleFlashes(void)
+{
+    for (int i = 0; i < MAX_MUZZLE_FLASHES; i++) {
+        if (game.muzzleFlashes[i].active) {
+            MuzzleFlash* flash = &game.muzzleFlashes[i];
+            WeaponStats* stats = &weaponStats[flash->weaponType];
+            
+            float intensity = flash->intensity;
+            Color flashColor = stats->muzzleFlashColor;
+            flashColor.a = (unsigned char)(200 * intensity);
+            
+            // Draw main flame cone
+            Vector2 flameEnd = {
+                flash->position.x + cosf(flash->angle) * flash->flameLength * intensity,
+                flash->position.y + sinf(flash->angle) * flash->flameLength * intensity
+            };
+            
+            // Draw multiple flame tongues for realistic effect
+            for (int j = 0; j < 5; j++) {
+                float spreadOffset = (j - 2) * flash->spreadAngle * 0.3f;
+                float currentAngle = flash->angle + spreadOffset;
+                float flameLength = flash->flameLength * intensity * (0.7f + (rand() % 30) * 0.01f);
+                
+                Vector2 tongueEnd = {
+                    flash->position.x + cosf(currentAngle) * flameLength,
+                    flash->position.y + sinf(currentAngle) * flameLength
+                };
+                
+                // Inner flame (bright)
+                Color innerFlame = stats->muzzleFlashColor;
+                innerFlame.a = (unsigned char)(150 * intensity);
+                DrawLineEx(flash->position, tongueEnd, flash->size * 0.4f * intensity, innerFlame);
+                
+                // Outer flame (dimmer, larger)
+                Color outerFlame = stats->muzzleFlashColor;
+                outerFlame.r = (unsigned char)(outerFlame.r * 0.8f);
+                outerFlame.g = (unsigned char)(outerFlame.g * 0.6f);
+                outerFlame.b = (unsigned char)(outerFlame.b * 0.4f);
+                outerFlame.a = (unsigned char)(100 * intensity);
+                DrawLineEx(flash->position, tongueEnd, flash->size * 0.8f * intensity, outerFlame);
+            }
+            
+            // Draw bright center core
+            Color coreColor = WHITE;
+            coreColor.a = (unsigned char)(255 * intensity);
+            DrawCircle(flash->position.x, flash->position.y, flash->size * 0.3f * intensity, coreColor);
+            
+            // Draw outer glow
+            Color glowColor = stats->muzzleFlashColor;
+            glowColor.a = (unsigned char)(80 * intensity);
+            DrawCircle(flash->position.x, flash->position.y, flash->size * 1.2f * intensity, glowColor);
+        }
+    }
+}
+
+void DrawHitEffects(void)
+{
+    for (int i = 0; i < MAX_HIT_EFFECTS; i++) {
+        if (game.hitEffects[i].active) {
+            HitEffect* effect = &game.hitEffects[i];
+            DrawCircle(effect->position.x, effect->position.y, effect->size, effect->color);
+        }
+    }
+}
+
+void CreateParticle(Vector2 pos, Vector2 vel, ParticleType type, Color color, float size)
+{
+    for (int i = 0; i < MAX_PARTICLES; i++) {
+        if (!game.particles[i].active) {
+            Particle* p = &game.particles[i];
+            p->position = pos;
+            p->velocity = vel;
+            p->acceleration = (Vector2){0, 0};
+            p->lifetime = PARTICLE_LIFETIME;
+            p->maxLifetime = PARTICLE_LIFETIME;
+            p->color = color;
+            p->size = size;
+            p->rotation = 0;
+            p->rotationSpeed = (rand() % 360 - 180) * 0.01f;
+            p->type = type;
+            p->active = true;
+            game.particleCount++;
+            break;
+        }
+    }
+}
+
+void CreateMuzzleFlash(Vector2 pos, float angle, WeaponType weaponType)
+{
+    for (int i = 0; i < MAX_MUZZLE_FLASHES; i++) {
+        if (!game.muzzleFlashes[i].active) {
+            WeaponStats* stats = &weaponStats[weaponType];
+            game.muzzleFlashes[i].position = pos;
+            game.muzzleFlashes[i].angle = angle;
+            game.muzzleFlashes[i].lifetime = MUZZLE_FLASH_LIFETIME;
+            game.muzzleFlashes[i].weaponType = weaponType;
+            game.muzzleFlashes[i].intensity = 1.0f;
+            game.muzzleFlashes[i].size = stats->muzzleFlashSize;
+            game.muzzleFlashes[i].flameLength = stats->muzzleFlashSize * 2.0f;
+            // Weapon-specific muzzle flash characteristics
+            switch (weaponType) {
+                case WEAPON_PISTOL:
+                    game.muzzleFlashes[i].spreadAngle = 0.2f;
+                    game.muzzleFlashes[i].flameLength = stats->muzzleFlashSize * 1.5f;
+                    break;
+                case WEAPON_SHOTGUN:
+                    game.muzzleFlashes[i].spreadAngle = 0.6f;
+                    game.muzzleFlashes[i].flameLength = stats->muzzleFlashSize * 1.8f;
+                    break;
+                case WEAPON_RIFLE:
+                    game.muzzleFlashes[i].spreadAngle = 0.15f;
+                    game.muzzleFlashes[i].flameLength = stats->muzzleFlashSize * 2.5f;
+                    break;
+                case WEAPON_SMG:
+                    game.muzzleFlashes[i].spreadAngle = 0.25f;
+                    game.muzzleFlashes[i].flameLength = stats->muzzleFlashSize * 1.3f;
+                    break;
+                case WEAPON_SNIPER:
+                    game.muzzleFlashes[i].spreadAngle = 0.1f;
+                    game.muzzleFlashes[i].flameLength = stats->muzzleFlashSize * 3.0f;
+                    break;
+                default:
+                    game.muzzleFlashes[i].spreadAngle = 0.3f;
+                    break;
+            }
+            game.muzzleFlashes[i].active = true;
+            game.muzzleFlashCount++;
+            break;
+        }
+    }
+}
+
+void CreateHitEffect(Vector2 pos, ParticleType type, Color color)
+{
+    for (int i = 0; i < MAX_HIT_EFFECTS; i++) {
+        if (!game.hitEffects[i].active) {
+            game.hitEffects[i].position = pos;
+            game.hitEffects[i].lifetime = HIT_EFFECT_LIFETIME;
+            game.hitEffects[i].maxLifetime = HIT_EFFECT_LIFETIME;
+            game.hitEffects[i].color = color;
+            game.hitEffects[i].size = 8.0f;
+            game.hitEffects[i].type = type;
+            game.hitEffects[i].active = true;
+            game.hitEffectCount++;
+            break;
+        }
+    }
+}
+
+void CreateBloodSplatter(Vector2 pos, Vector2 bulletVel)
+{
+    // Create multiple blood particles
+    for (int i = 0; i < 4; i++) {
+        Vector2 vel = {
+            bulletVel.x * 0.3f + (rand() % 100 - 50),
+            bulletVel.y * 0.3f + (rand() % 100 - 50)
+        };
+        Color bloodColor = (Color){150 + rand() % 50, 0, 0, 255};
+        CreateParticle(pos, vel, PARTICLE_BLOOD, bloodColor, 2.0f + rand() % 2);
+    }
+    
+    // Create hit effect
+    CreateHitEffect(pos, PARTICLE_BLOOD, (Color){200, 0, 0, 255});
+}
+
+void CreateSparkEffect(Vector2 pos, Vector2 bulletVel)
+{
+    // Create spark particles
+    for (int i = 0; i < 3; i++) {
+        Vector2 vel = {
+            -bulletVel.x * 0.2f + (rand() % 60 - 30),
+            -bulletVel.y * 0.2f + (rand() % 60 - 30)
+        };
+        Color sparkColor = (Color){255, 200 + rand() % 55, 100, 255};
+        CreateParticle(pos, vel, PARTICLE_SPARK, sparkColor, 1.5f);
+    }
+    
+    // Create spark hit effect
+    CreateHitEffect(pos, PARTICLE_SPARK, (Color){255, 255, 150, 255});
+}
+
+void AddDamageFlash(Color color, float intensity)
+{
+    game.damageFlashColor = color;
+    game.damageFlashTimer = intensity;
 }
 
 int StartHost(int port)

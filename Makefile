@@ -1,7 +1,7 @@
 # Makefile for Layla 2D Multiplayer Shooter (C/raylib)
 
 CC = gcc
-CFLAGS = -std=c99 -Wall -Wextra -O2
+CFLAGS = -std=c99 -Wall -Wextra -O3
 LDFLAGS = -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
 
 # Detect OS for platform-specific flags
