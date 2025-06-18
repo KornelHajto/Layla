@@ -1,5 +1,6 @@
 #include "raylib.h"
 #include "raymath.h"
+#include "rlgl.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,10 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 // Game constants
 #define SCREEN_WIDTH 1024
 #define SCREEN_HEIGHT 768
@@ -19,11 +24,17 @@
 #define MAX_BULLETS 500
 #define PLAYER_SIZE 20
 #define PLAYER_SPEED 300.0f
+#define PLAYER_ACCELERATION 1500.0f
+#define PLAYER_FRICTION 800.0f
 #define BULLET_SIZE 3
 #define BULLET_SPEED 600.0f
 #define BULLET_LIFETIME 3.0f
 #define GUN_LENGTH 25
 #define SHOOT_COOLDOWN 0.1f
+#define RECOIL_STRENGTH 8.0f
+#define RECOIL_RECOVERY 12.0f
+#define MAX_RECOIL_OFFSET 15.0f
+#define SCREEN_SHAKE_DECAY 15.0f
 #define MAX_MESSAGE_SIZE 1024
 #define DEFAULT_PORT 12345
 
@@ -40,9 +51,12 @@ typedef struct {
     char id[32];
     Vector2 position;
     Vector2 velocity;
+    Vector2 targetVelocity;
+    Vector2 recoilOffset;
     float gunAngle;
     float health;
     float shootCooldown;
+    float recoilAmount;
     Color color;
     bool active;
     bool isLocal;
@@ -124,6 +138,11 @@ typedef struct {
     int targetFPS;
     bool vsyncEnabled;
     bool showAdvancedStats;
+    
+    // Visual effects
+    Vector2 screenShake;
+    float screenShakeIntensity;
+    bool screenShakeEnabled;
 } Game;
 
 // Global game instance
@@ -192,6 +211,9 @@ void InitGame(void)
     game.targetFPS = 0; // Uncapped by default
     game.vsyncEnabled = false;
     game.showAdvancedStats = false;
+    game.screenShake = (Vector2){0, 0};
+    game.screenShakeIntensity = 0;
+    game.screenShakeEnabled = true;
     
     // Initialize input fields
     strcpy(game.hostPortStr, "12345");
@@ -227,10 +249,27 @@ void UpdateGame(void)
     if (game.statusTimer > 0) {
         game.statusTimer -= dt;
     }
+    
+    // Update screen shake (much more subtle)
+    if (game.screenShakeEnabled && game.screenShakeIntensity > 0) {
+        game.screenShake.x = ((float)rand() / RAND_MAX - 0.5f) * 2.0f * game.screenShakeIntensity * 0.2f;
+        game.screenShake.y = ((float)rand() / RAND_MAX - 0.5f) * 2.0f * game.screenShakeIntensity * 0.2f;
+        game.screenShakeIntensity -= SCREEN_SHAKE_DECAY * dt;
+        if (game.screenShakeIntensity < 0) game.screenShakeIntensity = 0;
+    } else {
+        game.screenShake = (Vector2){0, 0};
+        game.screenShakeIntensity = 0;
+    }
 }
 
 void DrawGame(void)
 {
+    // Apply screen shake offset
+    if (game.screenShakeEnabled && game.screenShakeIntensity > 0) {
+        rlPushMatrix();
+        rlTranslatef(game.screenShake.x, game.screenShake.y, 0);
+    }
+    
     switch (game.state) {
         case GAME_MENU:
             DrawMenu();
@@ -246,6 +285,11 @@ void DrawGame(void)
             DrawBullets();
             DrawUI();
             break;
+    }
+    
+    // Remove screen shake offset
+    if (game.screenShakeEnabled && game.screenShakeIntensity > 0) {
+        rlPopMatrix();
     }
 }
 
@@ -408,6 +452,14 @@ void HandleInput(void)
                 SetTargetFPS(game.targetFPS);
                 SetStatusMessage("VSync: OFF", 2.0f);
             }
+        } else if (IsKeyPressed(KEY_F5)) {
+            game.screenShakeEnabled = !game.screenShakeEnabled;
+            if (game.screenShakeEnabled) {
+                SetStatusMessage("Screen Shake: ON", 2.0f);
+            } else {
+                SetStatusMessage("Screen Shake: OFF", 2.0f);
+                game.screenShakeIntensity = 0;
+            }
         }
     }
 }
@@ -416,28 +468,63 @@ void UpdatePlayers(float dt)
 {
     Player* localPlayer = FindPlayer(game.localPlayerId);
     if (localPlayer && localPlayer->active) {
-        // Update gun angle to point at mouse
+        // Update gun angle to point at mouse (with recoil offset)
         Vector2 mousePos = GetMousePosition();
-        Vector2 diff = {mousePos.x - localPlayer->position.x, mousePos.y - localPlayer->position.y};
+        Vector2 adjustedMousePos = {
+            mousePos.x + localPlayer->recoilOffset.x,
+            mousePos.y + localPlayer->recoilOffset.y
+        };
+        Vector2 diff = {adjustedMousePos.x - localPlayer->position.x, adjustedMousePos.y - localPlayer->position.y};
         localPlayer->gunAngle = atan2f(diff.y, diff.x);
         
-        // Handle movement
-        Vector2 movement = {0};
-        if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) movement.y -= 1;
-        if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) movement.y += 1;
-        if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) movement.x -= 1;
-        if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) movement.x += 1;
+        // Handle movement input
+        Vector2 inputDirection = {0};
+        if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) inputDirection.y -= 1;
+        if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) inputDirection.y += 1;
+        if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) inputDirection.x -= 1;
+        if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) inputDirection.x += 1;
         
-        // Normalize movement
-        float length = sqrtf(movement.x * movement.x + movement.y * movement.y);
-        if (length > 0) {
-            movement.x /= length;
-            movement.y /= length;
+        // Normalize input direction
+        float inputLength = sqrtf(inputDirection.x * inputDirection.x + inputDirection.y * inputDirection.y);
+        if (inputLength > 0) {
+            inputDirection.x /= inputLength;
+            inputDirection.y /= inputLength;
         }
         
-        // Apply movement (immediate client-side prediction)
-        localPlayer->velocity.x = movement.x * PLAYER_SPEED;
-        localPlayer->velocity.y = movement.y * PLAYER_SPEED;
+        // Calculate target velocity
+        localPlayer->targetVelocity.x = inputDirection.x * PLAYER_SPEED;
+        localPlayer->targetVelocity.y = inputDirection.y * PLAYER_SPEED;
+        
+        // Apply acceleration/friction for smooth movement
+        if (inputLength > 0) {
+            // Accelerate towards target velocity
+            float accelX = (localPlayer->targetVelocity.x - localPlayer->velocity.x) * PLAYER_ACCELERATION * dt;
+            float accelY = (localPlayer->targetVelocity.y - localPlayer->velocity.y) * PLAYER_ACCELERATION * dt;
+            localPlayer->velocity.x += accelX;
+            localPlayer->velocity.y += accelY;
+        } else {
+            // Apply friction when no input
+            float frictionForce = PLAYER_FRICTION * dt;
+            float currentSpeed = sqrtf(localPlayer->velocity.x * localPlayer->velocity.x + localPlayer->velocity.y * localPlayer->velocity.y);
+            if (currentSpeed > 0) {
+                float frictionX = -(localPlayer->velocity.x / currentSpeed) * frictionForce;
+                float frictionY = -(localPlayer->velocity.y / currentSpeed) * frictionForce;
+                
+                if (fabsf(frictionX) > fabsf(localPlayer->velocity.x)) {
+                    localPlayer->velocity.x = 0;
+                } else {
+                    localPlayer->velocity.x += frictionX;
+                }
+                
+                if (fabsf(frictionY) > fabsf(localPlayer->velocity.y)) {
+                    localPlayer->velocity.y = 0;
+                } else {
+                    localPlayer->velocity.y += frictionY;
+                }
+            }
+        }
+        
+        // Apply velocity to position
         localPlayer->position.x += localPlayer->velocity.x * dt;
         localPlayer->position.y += localPlayer->velocity.y * dt;
         
@@ -454,6 +541,17 @@ void UpdatePlayers(float dt)
             localPlayer->shootCooldown -= dt;
         }
         
+        // Update recoil recovery
+        if (localPlayer->recoilAmount > 0) {
+            localPlayer->recoilAmount -= RECOIL_RECOVERY * dt;
+            if (localPlayer->recoilAmount < 0) localPlayer->recoilAmount = 0;
+        }
+        
+        // Update recoil offset based on current recoil amount
+        float recoilAngle = localPlayer->gunAngle + M_PI; // Opposite direction of gun
+        localPlayer->recoilOffset.x = cosf(recoilAngle) * localPlayer->recoilAmount;
+        localPlayer->recoilOffset.y = sinf(recoilAngle) * localPlayer->recoilAmount;
+        
         // Handle shooting
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && localPlayer->shootCooldown <= 0) {
             Vector2 gunEnd = {
@@ -466,16 +564,47 @@ void UpdatePlayers(float dt)
             };
             CreateBullet(gunEnd, bulletVel, localPlayer->id);
             localPlayer->shootCooldown = SHOOT_COOLDOWN;
+            
+            // Apply recoil
+            localPlayer->recoilAmount += RECOIL_STRENGTH;
+            if (localPlayer->recoilAmount > MAX_RECOIL_OFFSET) {
+                localPlayer->recoilAmount = MAX_RECOIL_OFFSET;
+            }
+            
+            // Add subtle screen shake for local player (only if enabled)
+            if (game.screenShakeEnabled) {
+                game.screenShakeIntensity += 0.8f;
+                if (game.screenShakeIntensity > 2.0f) {
+                    game.screenShakeIntensity = 2.0f;
+                }
+            }
+            
+            // Apply subtle recoil to velocity (kickback)
+            float recoilKickback = 25.0f;
+            localPlayer->velocity.x -= cosf(localPlayer->gunAngle) * recoilKickback;
+            localPlayer->velocity.y -= sinf(localPlayer->gunAngle) * recoilKickback;
         }
     }
     
     // Update all players
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (game.players[i].active) {
-            // Update non-local players with simple prediction
+            // Update non-local players with smooth interpolation
             if (!game.players[i].isLocal) {
-                game.players[i].position.x += game.players[i].velocity.x * dt * 0.3f;
-                game.players[i].position.y += game.players[i].velocity.y * dt * 0.3f;
+                // Simple velocity-based prediction
+                game.players[i].position.x += game.players[i].velocity.x * dt * 0.2f;
+                game.players[i].position.y += game.players[i].velocity.y * dt * 0.2f;
+                
+                // Update recoil recovery for remote players
+                if (game.players[i].recoilAmount > 0) {
+                    game.players[i].recoilAmount -= RECOIL_RECOVERY * dt;
+                    if (game.players[i].recoilAmount < 0) game.players[i].recoilAmount = 0;
+                }
+                
+                // Update recoil offset
+                float recoilAngle = game.players[i].gunAngle + M_PI;
+                game.players[i].recoilOffset.x = cosf(recoilAngle) * game.players[i].recoilAmount;
+                game.players[i].recoilOffset.y = sinf(recoilAngle) * game.players[i].recoilAmount;
             }
             
             // Update cooldowns
@@ -677,9 +806,16 @@ void DrawUI(void)
             DrawText(TextFormat("Target FPS: %s", game.targetFPS == 0 ? "Uncapped" : TextFormat("%d", game.targetFPS)), 10, 210, 16, WHITE);
             DrawText(TextFormat("VSync: %s", game.vsyncEnabled ? "ON" : "OFF"), 10, 230, 16, WHITE);
             DrawText(TextFormat("1% Low FPS: %.1f", GetFPS() * 0.99f), 10, 250, 16, WHITE);
+            
+            Player* localPlayer = FindPlayer(game.localPlayerId);
+            if (localPlayer) {
+                DrawText(TextFormat("Velocity: %.1f", sqrtf(localPlayer->velocity.x * localPlayer->velocity.x + localPlayer->velocity.y * localPlayer->velocity.y)), 10, 270, 16, WHITE);
+                DrawText(TextFormat("Recoil: %.1f", localPlayer->recoilAmount), 10, 290, 16, WHITE);
+                DrawText(TextFormat("Screen Shake: %s (%.1f)", game.screenShakeEnabled ? "ON" : "OFF", game.screenShakeIntensity), 10, 310, 16, WHITE);
+            }
         }
     } else {
-        DrawText("F1=Debug F2=Stats F3=FPS F4=VSync", 10, 90, 14, LIGHTGRAY);
+        DrawText("F1=Debug F2=Stats F3=FPS F4=VSync F5=Shake", 10, 90, 14, LIGHTGRAY);
     }
 }
 
@@ -706,9 +842,12 @@ Player* CreatePlayer(const char* id, Vector2 pos)
             strcpy(p->id, id);
             p->position = pos;
             p->velocity = (Vector2){0, 0};
+            p->targetVelocity = (Vector2){0, 0};
+            p->recoilOffset = (Vector2){0, 0};
             p->gunAngle = 0;
             p->health = 100;
             p->shootCooldown = 0;
+            p->recoilAmount = 0;
             p->color = (Color){
                 128 + rand() % 128,
                 128 + rand() % 128,
